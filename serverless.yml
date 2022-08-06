@@ -1,0 +1,43 @@
+service: delete-service
+frameworkVersion: '2'
+
+plugins:
+  - serverless-offline
+
+provider:
+  name: aws
+  runtime: nodejs14.x
+  stage: dev
+  region: us-east-1
+  memorySize: 128
+  tracing:
+    lambda: true
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - SNS:Publish
+      Resource:
+        - !Ref DeleteServiceTopic
+    - Effect: Allow
+      Action:
+        - xray:PutTraceSegments
+        - xray:PutTelemetryRecords
+      Resource:
+        - '*'
+
+# Criar recursos - Tópico no SNS
+
+resources:
+  Resources:
+    DeleteServiceTopic:
+      Type: AWS::SNS::Topic
+      Properties:
+        TopicName: DeleteServiceTopic
+        DisplayName: 'Topic used for publishing service deletion requests'
+
+
+functions:
+  deleteAccount:
+    handler: src/app.deleteAccount
+    environment:
+      SNS_TOPIC_ARN: !Ref DeleteServiceTopic
