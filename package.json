@@ -5,7 +5,7 @@
   "main": "handlers.js",
   "scripts": {
     "start": "",
-    "dev": "SLS_DEBUG=* sls offline",
+    "dev": "",
     "deploy": "serverless deploy",
     "lint": "eslint ./src --ext .json --ext .js --fix"
   },
@@ -20,7 +20,6 @@
   "dependencies": {
     "aws-sdk": "^2.796.0",
     "aws-xray-sdk-core": "^3.3.3",
-    "serverless-offline": "^9.1.6",
     "uuid": "^8.3.1",
     "uuid-by-string": "^3.0.4"
   },

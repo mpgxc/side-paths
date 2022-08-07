@@ -1,8 +1,10 @@
+org: mpgxc
+app: service-aws-audit
 service: delete-service
 frameworkVersion: '2'
 
-plugins:
-  - serverless-offline
+custom:
+  auditTableName: DeletedAccountsAuditTable
 
 provider:
   name: aws
@@ -24,20 +26,106 @@ provider:
         - xray:PutTelemetryRecords
       Resource:
         - '*'
+    - Effect: Allow
+      Action:
+        - dynamodb:DeleteItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:GetItem
+        - dynamodb:Scan
+        - dynamodb:Query
+      Resource:
+        - {"Fn::GetAtt": ["DeletedAccountsAuditTable", "Arn"]}
 
 # Criar recursos - Tópico no SNS
 
 resources:
   Resources:
+
     DeleteServiceTopic:
       Type: AWS::SNS::Topic
       Properties:
         TopicName: DeleteServiceTopic
         DisplayName: 'Topic used for publishing service deletion requests'
 
+    DeleteServiceQueue:
+      Type: AWS::SQS::Queue
+      Properties:
+        QueueName: DeleteServiceQueue
+        MessageRetentionPeriod: 1209600 # Semanas em segundas (2 semanas)
+        VisibilityTimeout: 60
+        RedrivePolicy:
+          deadLetterTargetArn:
+            Fn::GetAtt:
+              - DeleteServiceQueueDLQ
+              - Arn
+          maxReceiveCount: 5
+
+    DeleteServiceQueueDLQ:
+      Type: AWS::SQS::Queue
+      Properties:
+        QueueName: DeleteServiceQueueDLQ
+        MessageRetentionPeriod: 1209600
+
+    DeleteServiceQueueTopicPolicy:
+      Type: AWS::SQS::QueuePolicy
+      Properties:
+        Queues:
+          - !Ref DeleteServiceQueue
+        PolicyDocument:
+          Id: DeleteServiceQueueTopicPolicy
+          Statement:
+            - Effect: Allow
+              Principal: "*"
+              Resource: "*"
+              Action:
+                - sqs:SendMessage
+              Condition:
+                ArnEquals:
+                  aws:SourceArn: !Ref DeleteServiceTopic
+
+    DeleteServiceQueueTopicSubscription:
+      Type: AWS::SNS::Subscription
+      Properties:
+        Protocol: sqs
+        RawMessageDelivery: true
+        TopicArn: !Ref DeleteServiceTopic
+        Endpoint:
+          Fn::GetAtt:
+            - DeleteServiceQueue
+            - Arn
+
+    DeletedAccountsAuditTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        BillingMode: PAY_PER_REQUEST
+        TableName: ${self:custom.auditTableName}
+        AttributeDefinitions:
+          - AttributeName: "userId"
+            AttributeType: "S"
+          - AttributeName: "deletedAt"
+            AttributeType: "S"
+        KeySchema:
+          - AttributeName: "userId"
+            KeyType: "HASH"
+          - AttributeName: "deletedAt"
+            KeyType: "RANGE"
 
 functions:
   deleteAccount:
     handler: src/app.deleteAccount
     environment:
       SNS_TOPIC_ARN: !Ref DeleteServiceTopic
+
+  recordDeletedAccountInfo:
+    handler: src/consumer.recordDeletedAccountInfo
+    timeout: 60
+    environment:
+      DYNAMODB_TABLE: ${self:custom.auditTableName}
+    events:
+      - sqs:
+          arn:
+            Fn::GetAtt:
+              - DeleteServiceQueue
+              - Arn
+          batchSize: 1
